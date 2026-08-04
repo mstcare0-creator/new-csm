@@ -440,6 +440,8 @@
                 setDetailTab("info"); 
                 setHistoryYearFilter("all");
                 setPaymentYearFilter("all");
+                // 📱 리스트를 한참 내린 상태에서 업체를 눌러도, 상세창을 다시 스크롤해서 찾을 필요 없이 바로 보이도록 처리
+                window.scrollTo({ top: 0, behavior: 'smooth' });
             };
 
             const handleAddCustomMethod = () => {
