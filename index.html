@@ -936,8 +936,8 @@
                                     {adminMode && <button onClick={handleBatchInsert} className="px-3 py-1.5 border border-blue-600 text-blue-700 bg-blue-50 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm hover:bg-blue-600 hover:text-white transition-all">🪄 과거기록 일괄 자동채우기</button>}
                                     <button onClick={() => {
                                         const secsSinceSave = (Date.now() - lastSaveTimeRef.current) / 1000;
-                                        if (lastSaveTimeRef.current && secsSinceSave < 15) {
-                                            if (!confirm(`⏳ 방금 저장한 내용(${Math.ceil(15 - secsSinceSave)}초 전)이 서버에 아직 반영 중일 수 있어요.\n지금 새로고침하면 그 내용이 안 보일 수 있습니다.\n\n그래도 새로고침하시겠어요? (조금 기다렸다가 누르시는 걸 권장해요)`)) return;
+                                        if (lastSaveTimeRef.current && secsSinceSave < 3) {
+                                            if (!confirm(`⏳ 방금 저장한 내용(${Math.ceil(3 - secsSinceSave)}초 전)이 서버에 아직 반영 중일 수 있어요.\n지금 새로고침하면 그 내용이 안 보일 수 있습니다.\n\n그래도 새로고침하시겠어요? (조금 기다렸다가 누르시는 걸 권장해요)`)) return;
                                         }
                                         window.location.reload();
                                     }} className="px-3 py-1.5 border border-[#0B5E4D] text-[#0B5E4D] rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm hover:bg-[#0B5E4D] hover:text-white transition-all">🔄 최신 데이터 불러오기</button>
