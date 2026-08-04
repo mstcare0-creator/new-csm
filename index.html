@@ -584,7 +584,7 @@
                     const idx = newData.findIndex(d => d.id === r.matched.id);
                     if (idx < 0) return;
                     const existing = newData[idx].paymentHistory || [];
-                    const isDup = r.orderNo && existing.some(p => p.orderNo === r.orderNo);
+                    const isDup = r.orderNo && existing.some(p => p.orderNo === r.orderNo && p.month === r.payMonth);
                     if (isDup) return;
                     const newPay = { id: Date.now() + Math.random(), month: r.payMonth, payDate: r.payDate, orderNo: r.orderNo, amount: r.amount, status: r.status, method: r.method, note: `페이소프트 자동반영 (${r.billingMonth} 청구 / ${r.payDate} 결제)`, serviceItem: "정기방역" };
                     newData[idx] = { ...newData[idx], paymentHistory: [newPay, ...(newData[idx].paymentHistory || [])] };
