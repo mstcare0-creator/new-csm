@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MSTC방역 소독증명서 발급 포털</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.22.20/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #f9fafb; margin:0; }
+        @media print {
+            body * { visibility: hidden; }
+            #print-area, #print-area * { visibility: visible; }
+            #print-area { position: absolute; left: 0; top: 0; width: 100%; margin: 0; }
+            @page { size: A4 portrait; margin: 0mm; }
+            body { background-color: white; }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        const SUPABASE_URL = "https://jfcyfxmnazhowiwpknan.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_ciwf-suIq1KH172gOiInZw_HHKchiaP";
+        const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const CERT_ISSUER = { name: "주)모바일솔루션즈", address: "부산 강서구 명지국제2로28번길 24, 620호", reps: "구승재, 구태원" };
+        const COMPANY_SEAL_URL = "https://mstcare0-creator.github.io/mstc-crm/seal.png"; 
+
+        function App() {
+            const [bizNum, setBizNum] = useState("");
+            const [clientData, setClientData] = useState(null);
+            const [availableHistories, setAvailableHistories] = useState([]);
+            const [selectedHistory, setSelectedHistory] = useState(null);
+            
+            const [error, setError] = useState("");
+            const [loading, setLoading] = useState(false);
+            const [certNumber, setCertNumber] = useState(""); 
+            const [sealImgFailed, setSealImgFailed] = useState(false); 
+
+            const updateSelectedHistory = (historyObj) => {
+                setSelectedHistory(historyObj);
+                const yy = historyObj.date.split('-')[0].slice(2);
+                const mm = historyObj.date.split('-')[1];
+                const fixedNum = String(historyObj.id).slice(-4).padStart(4, '0'); 
+                setCertNumber(`제 ${yy}-${mm}-${fixedNum} 호`);
+            };
+
+            const searchCert = (e) => {
+                e.preventDefault();
+                if(!bizNum) return;
+                
+                setLoading(true); setError(""); setClientData(null); setSealImgFailed(false);
+                
+                sb.from('companies').select('payload')
+                    .then(({ data: rows, error }) => {
+                        if (error) throw error;
+                        const data = (rows || []).map(r => r.payload);
+                        const cleanInput = bizNum.replace(/-/g, "").trim();
+                        const found = data.find(d => d.bizNumber && d.bizNumber.replace(/-/g, "").trim() === cleanInput);
+                        
+                        if(found) {
+                            const sixMonthsAgo = new Date();
+                            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+                            const histories = (found.history || [])
+                                .filter(h => h.type === "방역" && new Date(h.date) >= sixMonthsAgo)
+                                .sort((a,b) => new Date(b.date) - new Date(a.date));
+                                
+                            if(histories.length > 0) {
+                                setClientData(found);
+                                setAvailableHistories(histories);
+                                updateSelectedHistory(histories[0]); 
+                            } else {
+                                setError("최근 6개월 이내에 진행된 방역 내역이 없습니다.");
+                            }
+                        } else {
+                            setError("등록된 사업자번호가 아닙니다. 띄어쓰기나 - 기호 없이 정확히 입력해주세요.");
+                        }
+                        setLoading(false);
+                    })
+                    .catch(err => { 
+                        setError("서버와 통신할 수 없습니다. 잠시 후 다시 시도해주세요."); 
+                        setLoading(false); 
+                    });
+            };
+
+            return (
+                <div className="max-w-3xl mx-auto bg-white p-6 md:p-10 rounded-3xl shadow-xl border border-gray-100">
+                    <div className="text-center mb-8">
+                        <h1 className="text-2xl md:text-3xl font-bold text-[#0B5E4D] mb-2">📄 소독증명서 자가 발급</h1>
+                        <p className="text-sm text-gray-500 font-medium">MSTC방역 고객사 전용 발급 포털</p>
+                    </div>
+
+                    {!clientData && (
+                        <form onSubmit={searchCert} className="max-w-md mx-auto flex flex-col gap-4">
+                            <input 
+                                type="text" 
+                                value={bizNum} 
+                                onChange={e => setBizNum(e.target.value)} 
+                                placeholder="사업자등록번호 입력 (- 제외)" 
+                                className="w-full p-4 border-2 rounded-xl text-center font-bold tracking-[0.2em] outline-none bg-gray-50 focus:border-[#0B5E4D] focus:bg-white transition-all text-lg" 
+                                autoFocus
+                            />
+                            <button type="submit" disabled={loading} className="w-full bg-[#0B5E4D] text-white py-4 rounded-xl font-bold hover:bg-[#084b3e] disabled:opacity-50 transition-all shadow-md text-base">
+                                {loading ? "데이터베이스 조회 중..." : "최근 6개월 증명서 조회하기"}
+                            </button>
+                            {error && <p className="text-red-500 text-sm font-bold text-center mt-2 bg-red-50 py-2 rounded-lg">{error}</p>}
+                        </form>
+                    )}
+
+                    {clientData && selectedHistory && (
+                        <div className="animate-fade-in mt-2">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 print:hidden gap-3 bg-gray-50 p-3 rounded-2xl border border-gray-200">
+                                <div className="flex items-center gap-2 w-full sm:w-auto">
+                                    <span className="text-sm font-bold text-gray-600 whitespace-nowrap">📅 발급월 선택:</span>
+                                    <select 
+                                        value={selectedHistory.id} 
+                                        onChange={(e) => {
+                                            const target = availableHistories.find(h => h.id.toString() === e.target.value);
+                                            updateSelectedHistory(target);
+                                        }}
+                                        className="p-2 border rounded-xl text-sm font-bold bg-white outline-none focus:border-[#0B5E4D] shadow-sm w-full sm:w-auto"
+                                    >
+                                        {availableHistories.map(h => (
+                                            <option key={h.id} value={h.id}>
+                                                {h.date.split('-')[0]}년 {h.date.split('-')[1]}월 방역분
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                    <button onClick={() => setClientData(null)} className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-100 shadow-sm">처음으로</button>
+                                    <button onClick={() => window.print()} className="flex-1 sm:flex-none px-4 py-2.5 bg-[#0B5E4D] text-white rounded-xl text-sm font-bold shadow-md hover:bg-[#084b3e]">🖨️ 인쇄/PDF</button>
+                                </div>
+                            </div>
+
+                            <div id="print-area" className="border border-black p-8 md:p-12 bg-white text-black text-[13px] leading-relaxed mx-auto w-full max-w-[210mm] shadow-sm print:shadow-none print:border-0" style={{ boxSizing: "border-box" }}>
+                                
+                                <div className="flex justify-between items-start mb-2">
+                                    <p className="text-[10px] text-gray-500 font-medium">■ 감염병의 예방 및 관리에 관한 법률 시행규칙 [별지 제28호서식]</p>
+                                    <p className="font-bold text-[13px]">{certNumber}</p>
+                                </div>
+                                
+                                <h2 className="text-center text-2xl md:text-3xl font-black tracking-[0.6em] my-10 pt-4">소 독 증 명 서</h2>
+                                
+                                <table className="w-full border-collapse border border-black text-left my-8">
+                                    <tbody>
+                                        <tr>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-center w-24 md:w-28 text-[13px] md:text-[14px]" rowSpan="2">대상 시설</td>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold w-20 md:w-24 text-[13px] md:text-[14px]">상호(명칭)</td>
+                                            <td className="border border-black p-4 font-bold text-[14px] md:text-[15px]">{clientData.name}</td>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold w-28 md:w-32 text-[13px] md:text-[14px]">실시 면적(용적)</td>
+                                            <td className="border border-black p-4 font-mono text-[13px] md:text-[14px]">({clientData.area || "30"}평 ㎡)</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-[13px] md:text-[14px]">소재지</td>
+                                            <td className="border border-black p-4 text-[13px] md:text-[14px]" colSpan="3">{clientData.gu} {clientData.dong} {clientData.address}</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-center text-[13px] md:text-[14px]" colSpan="2">관리(운영)자 확인</td>
+                                            <td className="border border-black p-4 text-[13px] md:text-[14px]" colSpan="3">
+                                                <div className="flex justify-between pr-4 md:pr-10">
+                                                    <span>직위 : {clientData.clientTitle || "매니저"}</span>
+                                                    {/* 💡 고객 성명이 없으면 출동대원 이름 자동 출력 */}
+                                                    <span>성명 : {clientData.clientName || selectedHistory.author || "이원식"}</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-center text-[13px] md:text-[14px]" colSpan="2">소독기간</td>
+                                            <td className="border border-black p-4 text-center font-mono text-[13px] md:text-[14px]" colSpan="3">{selectedHistory.date} ~ {selectedHistory.date}</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-center text-[13px] md:text-[14px]" rowSpan="2">소독 내용</td>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-[13px] md:text-[14px]">종류</td>
+                                            <td className="border border-black p-4 text-[13px] md:text-[14px]" colSpan="3">{(selectedHistory.methods && selectedHistory.methods.length > 0) ? selectedHistory.methods.map(m=>m+" 잔류 분무").join(", ") : "살충 잔류 분무"}</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="border border-black p-4 bg-gray-50 font-bold text-[13px] md:text-[14px]">약품 사용 내용</td>
+                                            <td className="border border-black p-4 font-medium text-[13px] md:text-[14px]" colSpan="3">{(selectedHistory.chemicals && selectedHistory.chemicals.length > 0) ? selectedHistory.chemicals.join(", ") : "롱다운플러스"}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                
+                                <p className="my-10 text-[13px] md:text-[14px] text-justify leading-loose text-gray-900 px-2">&nbsp;&nbsp;&nbsp;「감염병의 예방 및 관리에 관한 법률」 제54조제1항 및 같은 법 시행규칙 제40조제2항에 따라 위와 같이 소독을 실시하였음을 증명합니다.</p>
+                                
+                                <h3 className="text-center font-bold text-[14px] md:text-[15px] my-10 tracking-widest">
+                                    {selectedHistory.date.split("-")[0]} 년 &nbsp;&nbsp;&nbsp;&nbsp; {selectedHistory.date.split("-")[1]} 월 &nbsp;&nbsp;&nbsp;&nbsp; {selectedHistory.date.split("-")[2]} 일
+                                </h3>
+                                
+                                <div className="mt-16 pt-8 border-t border-black text-[12px] md:text-[13px] space-y-3 relative">
+                                    <p className="flex justify-between"><span><b>소독 실시자 상호(명칭)</b></span> <span className="font-bold text-right text-[13px] md:text-[14px]">{CERT_ISSUER.name}</span></p>
+                                    <p className="flex justify-between"><span><b>소재지</b></span> <span className="text-right text-gray-700 text-[12px] md:text-[13px]">{CERT_ISSUER.address}</span></p>
+                                    <p className="flex justify-between relative">
+                                        <span><b>성명(대표자)</b></span> <span className="font-bold text-right mr-24 text-[13px] md:text-[14px]">{CERT_ISSUER.reps}</span>
+                                        <span className="absolute right-12 top-[-15px]">
+                                            {COMPANY_SEAL_URL && !sealImgFailed ? (
+                                                <img 
+                                                    src={COMPANY_SEAL_URL} 
+                                                    alt="직인" 
+                                                    className="w-[65px] h-[65px] object-contain" 
+                                                    onError={() => setSealImgFailed(true)} 
+                                                />
+                                            ) : (
+                                                <span className="text-red-600 font-bold border-2 border-red-600 rounded-full w-[65px] h-[65px] flex items-center justify-center text-[11px] transform rotate-[-6deg] bg-white/40">법인인장</span>
+                                            )}
+                                        </span>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+</body>
+</html>
