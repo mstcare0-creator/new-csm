@@ -170,6 +170,13 @@
                     });
             }, []);
 
+            const CHUNK_SIZE_UPSERT = 20;
+            const chunkArray = (arr, size) => {
+                const out = [];
+                for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+                return out;
+            };
+
             const updateDataAndSync = (newData) => {
                 const clean = dedupeAndSort(newData);
 
@@ -210,13 +217,28 @@
                 (async () => {
                     try {
                         if (patch.length > 0) {
+                            // 🧩 한 번에 다 보내지 않고, 20개씩 나눠서(청크) 순서대로 업서트
+                            // (한 번에 너무 많이 보내면 요청 크기/타임아웃 문제로 통째로 실패할 수 있어서,
+                            //  나눠 보내면 일부가 실패해도 나머지는 반영되고, 어디서 실패했는지도 알 수 있음)
                             const rows = patch.map(item => ({ id: item.id, payload: item, updated_at: new Date().toISOString() }));
-                            const { error: upsertErr } = await sb.from('companies').upsert(rows, { onConflict: 'id' });
-                            if (upsertErr) throw upsertErr;
+                            const chunks = chunkArray(rows, CHUNK_SIZE_UPSERT);
+                            const failedChunks = [];
+                            for (let i = 0; i < chunks.length; i++) {
+                                const { error: upsertErr } = await sb.from('companies').upsert(chunks[i], { onConflict: 'id' });
+                                if (upsertErr) failedChunks.push({ index: i, error: upsertErr, count: chunks[i].length });
+                            }
+                            if (failedChunks.length > 0) {
+                                const failedCount = failedChunks.reduce((s, f) => s + f.count, 0);
+                                const successCount = rows.length - failedCount;
+                                throw new Error(`${chunks.length}묶음 중 ${failedChunks.length}묶음 실패 (성공 ${successCount}건 / 실패 ${failedCount}건). 첫 오류: ${failedChunks[0].error.message || failedChunks[0].error}`);
+                            }
                         }
                         if (deletedIds.length > 0) {
-                            const { error: delErr } = await sb.from('companies').delete().in('id', deletedIds);
-                            if (delErr) throw delErr;
+                            const idChunks = chunkArray(deletedIds, CHUNK_SIZE_UPSERT);
+                            for (let i = 0; i < idChunks.length; i++) {
+                                const { error: delErr } = await sb.from('companies').delete().in('id', idChunks[i]);
+                                if (delErr) throw delErr;
+                            }
                         }
                         setSaveStatus('done');
                     } catch (err) {
