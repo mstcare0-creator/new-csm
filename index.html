@@ -399,6 +399,7 @@
             const [filterDistrict, setFilterDistrict] = useState("");
             const [filterPayStatus, setFilterPayStatus] = useState(""); 
             const [filterCollection, setFilterCollection] = useState("");
+            const [filterCollectionMonth, setFilterCollectionMonth] = useState(CURRENT_MONTH);
             const [filterCompletion, setFilterCompletion] = useState(""); 
             const [chartManager, setChartManager] = useState("전체 담당자");
             const [filterRegMonth, setFilterRegMonth] = useState("");
@@ -779,7 +780,10 @@
                     const matchCity = !filterCity || r.gu === filterCity;
                     const matchDistrict = !filterDistrict || r.dong === filterDistrict;
                     const matchPayStatus = !filterPayStatus || String(r.payStatus || "").trim() === filterPayStatus;
-                    const matchCollection = !filterCollection || (filterCollection === '미수금' ? r.computedDebt > 0 : r.computedDebt === 0);
+                    const matchCollection = !filterCollection || (filterCollection === '미수금' ? r.computedDebt > 0 : (() => {
+                        const rec = (r.paymentHistory || []).find(p => p.month === filterCollectionMonth);
+                        return !!rec && (rec.status === '수금완료' || rec.status === '무료');
+                    })());
                     const matchRegMonth = !filterRegMonth || normalizeMonth(r.contractStart) === filterRegMonth;
                     const matchIssue = !filterIssueOnly || (r.adminMemo && String(r.adminMemo).trim() !== '');
                     const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
@@ -816,7 +820,7 @@
                 }
                 // 기본: 상호명 가나다 순 고정 정렬 (구글 시트 반환 순서와 무관)
                 return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
-            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterCompletion, sortOrder, adminMode, filterFee]);
+            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterCompletion, sortOrder, adminMode, filterFee]);
 
             const TAB_LABELS = { active: "방역거래처", prospect: "영업처", paused: "일시중지", terminated: "해지거래처" };
 
@@ -1157,8 +1161,13 @@
                                     <div className="flex flex-wrap gap-2 items-center justify-between">
                                         <div className="flex gap-2">
                                             <select value={filterCollection} onChange={e => setFilterCollection(e.target.value)} className="text-xs p-2.5 rounded-xl border bg-white outline-none font-bold text-red-600">
-                                                <option value="">수금 상태 전체</option><option value="미수금">🚨 미수금 업체만</option><option value="수금완료">수금 완료</option>
+                                                <option value="">수금 상태 전체</option><option value="미수금">🚨 미수금 업체만</option><option value="수금완료">✅ 특정월 수금완료</option>
                                             </select>
+                                            {filterCollection === '수금완료' && (
+                                                <select value={filterCollectionMonth} onChange={e => setFilterCollectionMonth(e.target.value)} className="text-xs p-2.5 rounded-xl border bg-white outline-none font-bold text-emerald-700">
+                                                    {[...new Set([CURRENT_MONTH, ...regMonthOptions])].sort().reverse().map(m => <option key={m} value={m}>{m} 수금완료</option>)}
+                                                </select>
+                                            )}
                                             <select value={filterRegMonth} onChange={e => setFilterRegMonth(e.target.value)} className="text-xs p-2.5 rounded-xl border bg-white outline-none font-bold text-[#0B5E4D]">
                                                 <option value="">등록월 전체</option>
                                                 {regMonthOptions.map(m => <option key={m} value={m}>{m} 등록</option>)}
