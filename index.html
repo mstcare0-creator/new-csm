@@ -416,6 +416,7 @@
             const [filterCollection, setFilterCollection] = useState("");
             const [filterCollectionMonth, setFilterCollectionMonth] = useState(CURRENT_MONTH);
             const [filterCompletion, setFilterCompletion] = useState(""); 
+            const [filterCycle, setFilterCycle] = useState("");
             const [chartManager, setChartManager] = useState("전체 담당자");
             const [filterRegMonth, setFilterRegMonth] = useState("");
             const [filterIssueOnly, setFilterIssueOnly] = useState(false);
@@ -804,10 +805,11 @@
                     const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
                     const feeNum = Number(String(r.fee || "0").replace(/[^0-9.-]/g, "")) || 0;
                     const matchFee = !filterFee || feeNum === Number(filterFee);
+                    const matchCycle = !filterCycle || String(r.cycle || "").trim() === filterCycle;
                     const isDueNow = isDueThisMonth(r, CURRENT_MONTH);
                     const isCompletedThisMonth = r.history && r.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH));
                     const matchCompletion = !filterCompletion || (isDueNow && (filterCompletion === 'completed' ? isCompletedThisMonth : !isCompletedThisMonth));
-                    return matchSearch && matchCity && matchDistrict && matchPayStatus && matchCollection && matchRegMonth && matchIssue && matchUnchecked && matchFee && matchCompletion;
+                    return matchSearch && matchCity && matchDistrict && matchPayStatus && matchCollection && matchRegMonth && matchIssue && matchUnchecked && matchFee && matchCycle && matchCompletion;
                 });
 
                 if (search) {
@@ -836,7 +838,7 @@
                 }
                 // 기본: 상호명 가나다 순 고정 정렬 (구글 시트 반환 순서와 무관)
                 return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
-            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterCompletion, sortOrder, adminMode, filterFee]);
+            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterCompletion, filterCycle, sortOrder, adminMode, filterFee]);
 
             const TAB_LABELS = { active: "방역거래처", prospect: "영업처", paused: "일시중지", terminated: "해지거래처" };
 
@@ -1173,6 +1175,11 @@
                                         
                                         <select value={filterCompletion} onChange={e => setFilterCompletion(e.target.value)} className="text-xs p-2.5 rounded-xl border bg-white outline-none font-bold text-[#0B5E4D]">
                                             <option value="">방역 상태 전체</option><option value="completed">✅ {CURRENT_MONTH_NUM}월 방역 완료</option><option value="pending">🚨 {CURRENT_MONTH_NUM}월 미실시</option>
+                                        </select>
+
+                                        <select value={filterCycle} onChange={e => setFilterCycle(e.target.value)} className="text-xs p-2.5 rounded-xl border bg-white outline-none font-bold text-indigo-700">
+                                            <option value="">방역주기 전체</option>
+                                            {CYCLES.map(c => <option key={c} value={c}>{c}</option>)}
                                         </select>
                                     </div>
                                     <div className="flex flex-wrap gap-2 items-center justify-between">
