@@ -100,6 +100,21 @@
             if (/오전|AM/i.test(s) && h === 12) h = 0;
             return h * 60 + m;
         }
+        // 🗓️ 방역주기(월1회/3개월1회/단기)를 고려해서, "이번 달이 이 업체의 방역 예정월인지" 판단
+        // - 단기 계약은 매달 체크하지 않음
+        // - 3개월1회는 방역시작일 기준 3개월마다 돌아오는 달만 "이번 달 예정"으로 봄
+        // - 그 외(월1회 등)는 매달이 예정월
+        function isDueThisMonth(item, currentMonth) {
+            if (item.cycle === '단기') return false;
+            if (item.cycle !== '3개월1회') return true;
+            const startMonth = normalizeMonth(item.contractStart);
+            if (!startMonth) return true; // 정보가 없으면 안전하게 매달 체크
+            const [sy, sm] = startMonth.split('-').map(Number);
+            const [cy, cm] = currentMonth.split('-').map(Number);
+            if (isNaN(sy) || isNaN(sm) || isNaN(cy) || isNaN(cm)) return true;
+            const diff = (cy - sy) * 12 + (cm - sm);
+            return diff >= 0 && diff % 3 === 0;
+        }
 
         function App() {
             const [data, setData] = useState([]);
@@ -789,8 +804,9 @@
                     const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
                     const feeNum = Number(String(r.fee || "0").replace(/[^0-9.-]/g, "")) || 0;
                     const matchFee = !filterFee || feeNum === Number(filterFee);
+                    const isDueNow = isDueThisMonth(r, CURRENT_MONTH);
                     const isCompletedThisMonth = r.history && r.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH));
-                    const matchCompletion = !filterCompletion || (filterCompletion === 'completed' ? isCompletedThisMonth : !isCompletedThisMonth);
+                    const matchCompletion = !filterCompletion || (isDueNow && (filterCompletion === 'completed' ? isCompletedThisMonth : !isCompletedThisMonth));
                     return matchSearch && matchCity && matchDistrict && matchPayStatus && matchCollection && matchRegMonth && matchIssue && matchUnchecked && matchFee && matchCompletion;
                 });
 
@@ -864,8 +880,9 @@
             const uncheckedThisMonthCount = activeData.filter(d => d.payStatus !== '무료' && !(d.paymentHistory || []).some(p => p.month === CURRENT_MONTH)).length;
             const leeCount = activeData.filter(d => d.manager === '이원식').length;
             const kangCount = activeData.filter(d => d.manager === '강현준').length;
-            const completedThisMonth = activeData.filter(c => c.history && c.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH))).length;
-            const delayedThisMonth = activeData.length - completedThisMonth;
+            const dueThisMonthData = activeData.filter(c => isDueThisMonth(c, CURRENT_MONTH));
+            const completedThisMonth = dueThisMonthData.filter(c => c.history && c.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH))).length;
+            const delayedThisMonth = dueThisMonthData.length - completedThisMonth;
             const activeLikeCount = enrichedData.filter(d => d.tab === 'active' || d.tab === 'paused').length;
             const termCount = enrichedData.filter(d => d.tab === 'terminated').length;
             const totalEver = activeLikeCount + termCount;
@@ -980,7 +997,7 @@
                             </div>
                             <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink">
                                 <div className="p-4 bg-rose-50 rounded-xl text-rose-700 text-2xl">📅</div>
-                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">이번 달 방역 현황</p><p className="text-2xl font-black text-gray-800 leading-none">{activeData.length}</p><p className="text-[11px] text-gray-500 font-bold mt-1.5">완료 {completedThisMonth}건 <span className="text-rose-600">· 지연 {delayedThisMonth}건</span></p></div>
+                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">이번 달 방역 현황</p><p className="text-2xl font-black text-gray-800 leading-none">{dueThisMonthData.length}</p><p className="text-[11px] text-gray-500 font-bold mt-1.5">완료 {completedThisMonth}건 <span className="text-rose-600">· 지연 {delayedThisMonth}건</span></p></div>
                             </div>
                             <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink">
                                 <div className="p-4 bg-gray-50 rounded-xl text-gray-700 text-2xl">📉</div>
@@ -1200,6 +1217,7 @@
 
                                 <div className="flex flex-col gap-3">
                                     {currentList.map(item => {
+                                        const isDueNow = isDueThisMonth(item, CURRENT_MONTH);
                                         const isCompletedThisMonth = item.history && item.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH));
 
                                         return (
@@ -1209,9 +1227,15 @@
                                                         <div className="flex items-center gap-2">
                                                             <p className="font-bold text-sm text-gray-800">{item.name}</p>
                                                             {item.tab === 'active' && (
-                                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border shadow-sm ${isCompletedThisMonth ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
-                                                                    {CURRENT_MONTH_NUM}월 {isCompletedThisMonth ? '완료✅' : '미실시🚨'}
-                                                                </span>
+                                                                !isDueNow ? (
+                                                                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold border shadow-sm bg-gray-50 text-gray-400 border-gray-200">
+                                                                        {item.cycle || '주기'} · 이번달 해당없음
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border shadow-sm ${isCompletedThisMonth ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                                                                        {CURRENT_MONTH_NUM}월 {isCompletedThisMonth ? '완료✅' : '미실시🚨'}
+                                                                    </span>
+                                                                )
                                                             )}
                                                         </div>
                                                         <p className="text-xs text-gray-500 mt-1">📍 {item.gu} {item.dong} · 담당: <b>{item.manager}</b></p>
