@@ -122,6 +122,14 @@
             const diff = (cy - sy) * 12 + (cm - sm);
             return diff >= 0 && diff % 3 === 0;
         }
+        // 📋 특정 달에 "이 업체의 수금 기록이 있어야 정상"인지 판단
+        // - 그 달에 아직 계약 전(방역시작일 이후)이었으면 당연히 기록 없는 게 맞음 → 대상 아님
+        // - 방역주기상 그 달이 예정월이 아니면(3개월1회 등) → 대상 아님
+        function shouldHavePaymentRecord(item, monthStr) {
+            const startMonth = normalizeMonth(item.contractStart);
+            if (startMonth && startMonth > monthStr) return false; // 그 달엔 아직 고객이 아니었음
+            return isDueThisMonth(item, monthStr);
+        }
 
         function App() {
             const [data, setData] = useState([]);
@@ -811,10 +819,10 @@
                     })());
                     const matchRegMonth = !filterRegMonth || normalizeMonth(r.contractStart) === filterRegMonth;
                     const matchIssue = !filterIssueOnly || (r.adminMemo && String(r.adminMemo).trim() !== '');
-                    const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
+                    const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && shouldHavePaymentRecord(r, CURRENT_MONTH) && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
                     const matchDebtOrUnchecked = !filterDebtOrUnchecked || (
                         r.computedDebt > 0 ||
-                        (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === PREV_MONTH))
+                        (r.payStatus !== '무료' && shouldHavePaymentRecord(r, PREV_MONTH) && !(r.paymentHistory || []).some(p => p.month === PREV_MONTH))
                     );
                     const feeNum = Number(String(r.fee || "0").replace(/[^0-9.-]/g, "")) || 0;
                     const matchFee = !filterFee || feeNum === Number(filterFee);
@@ -892,10 +900,10 @@
 
             const activeData = enrichedData.filter(d => d.tab === 'active');
             const issueCount = activeData.filter(d => d.adminMemo && String(d.adminMemo).trim() !== '').length;
-            const uncheckedThisMonthCount = activeData.filter(d => d.payStatus !== '무료' && !(d.paymentHistory || []).some(p => p.month === CURRENT_MONTH)).length;
+            const uncheckedThisMonthCount = activeData.filter(d => d.payStatus !== '무료' && shouldHavePaymentRecord(d, CURRENT_MONTH) && !(d.paymentHistory || []).some(p => p.month === CURRENT_MONTH)).length;
             // 🚨💰 미수금이거나, 지난 달(PREV_MONTH) 수금 기록이 아예 없는 업체 — 운영중 거래처 기준
             const debtOrUncheckedCount = activeData.filter(d =>
-                d.computedDebt > 0 || (d.payStatus !== '무료' && !(d.paymentHistory || []).some(p => p.month === PREV_MONTH))
+                d.computedDebt > 0 || (d.payStatus !== '무료' && shouldHavePaymentRecord(d, PREV_MONTH) && !(d.paymentHistory || []).some(p => p.month === PREV_MONTH))
             ).length;
             const leeCount = activeData.filter(d => d.manager === '이원식').length;
             const kangCount = activeData.filter(d => d.manager === '강현준').length;
