@@ -41,6 +41,13 @@
         const TODAY = new Date().toISOString().split('T')[0];
         const CURRENT_MONTH = TODAY.slice(0, 7);
         const CURRENT_MONTH_NUM = parseInt(CURRENT_MONTH.split('-')[1], 10);
+        // 📅 "지난 달" — 이번 달은 아직 안 끝났을 수 있어서, "수금 미입력" 체크는 지난 달 기준으로
+        const PREV_MONTH = (() => {
+            let [y, m] = CURRENT_MONTH.split('-').map(Number);
+            m -= 1;
+            if (m < 1) { m = 12; y -= 1; }
+            return `${y}-${String(m).padStart(2, '0')}`;
+        })();
         const DEFAULT_STAFF = ["이원식", "강현준"];
         const CYCLES = ["월1회", "3개월1회", "단기"];
         // 💡 다발이끔 살서제 삭제 완료
@@ -421,6 +428,7 @@
             const [filterRegMonth, setFilterRegMonth] = useState("");
             const [filterIssueOnly, setFilterIssueOnly] = useState(false);
             const [filterUncheckedOnly, setFilterUncheckedOnly] = useState(false);
+            const [filterDebtOrUnchecked, setFilterDebtOrUnchecked] = useState(false);
             const [filterFee, setFilterFee] = useState("");
             const [sortOrder, setSortOrder] = useState("name");
             
@@ -774,8 +782,9 @@
                 });
             }, [data]);
 
-            const totalUncollected = enrichedData.reduce((sum, item) => sum + (item.computedDebt || 0), 0);
-            const uncollectedClientsCount = enrichedData.filter(item => (item.computedDebt || 0) > 0).length;
+            // 🚨 해지 거래처는 미수금 총액/건수에서 제외 (운영 중인 곳 기준으로만 집계)
+            const totalUncollected = enrichedData.filter(item => item.tab !== 'terminated').reduce((sum, item) => sum + (item.computedDebt || 0), 0);
+            const uncollectedClientsCount = enrichedData.filter(item => item.tab !== 'terminated' && (item.computedDebt || 0) > 0).length;
 
             const selectedItemDebt = selectedItem ? enrichedData.find(d => d.id === selectedItem.id)?.computedDebt || 0 : 0;
             const selectedItemTotalPaid = useMemo(() => {
@@ -803,13 +812,17 @@
                     const matchRegMonth = !filterRegMonth || normalizeMonth(r.contractStart) === filterRegMonth;
                     const matchIssue = !filterIssueOnly || (r.adminMemo && String(r.adminMemo).trim() !== '');
                     const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
+                    const matchDebtOrUnchecked = !filterDebtOrUnchecked || (
+                        r.computedDebt > 0 ||
+                        (r.payStatus !== '무료' && !(r.paymentHistory || []).some(p => p.month === PREV_MONTH))
+                    );
                     const feeNum = Number(String(r.fee || "0").replace(/[^0-9.-]/g, "")) || 0;
                     const matchFee = !filterFee || feeNum === Number(filterFee);
                     const matchCycle = !filterCycle || String(r.cycle || "").trim() === filterCycle;
                     const isDueNow = isDueThisMonth(r, CURRENT_MONTH);
                     const isCompletedThisMonth = r.history && r.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH));
                     const matchCompletion = !filterCompletion || (isDueNow && (filterCompletion === 'completed' ? isCompletedThisMonth : !isCompletedThisMonth));
-                    return matchSearch && matchCity && matchDistrict && matchPayStatus && matchCollection && matchRegMonth && matchIssue && matchUnchecked && matchFee && matchCycle && matchCompletion;
+                    return matchSearch && matchCity && matchDistrict && matchPayStatus && matchCollection && matchRegMonth && matchIssue && matchUnchecked && matchDebtOrUnchecked && matchFee && matchCycle && matchCompletion;
                 });
 
                 if (search) {
@@ -838,7 +851,7 @@
                 }
                 // 기본: 상호명 가나다 순 고정 정렬 (구글 시트 반환 순서와 무관)
                 return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
-            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterCompletion, filterCycle, sortOrder, adminMode, filterFee]);
+            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterDebtOrUnchecked, filterCompletion, filterCycle, sortOrder, adminMode, filterFee]);
 
             const TAB_LABELS = { active: "방역거래처", prospect: "영업처", paused: "일시중지", terminated: "해지거래처" };
 
@@ -880,6 +893,10 @@
             const activeData = enrichedData.filter(d => d.tab === 'active');
             const issueCount = activeData.filter(d => d.adminMemo && String(d.adminMemo).trim() !== '').length;
             const uncheckedThisMonthCount = activeData.filter(d => d.payStatus !== '무료' && !(d.paymentHistory || []).some(p => p.month === CURRENT_MONTH)).length;
+            // 🚨💰 미수금이거나, 지난 달(PREV_MONTH) 수금 기록이 아예 없는 업체 — 운영중 거래처 기준
+            const debtOrUncheckedCount = activeData.filter(d =>
+                d.computedDebt > 0 || (d.payStatus !== '무료' && !(d.paymentHistory || []).some(p => p.month === PREV_MONTH))
+            ).length;
             const leeCount = activeData.filter(d => d.manager === '이원식').length;
             const kangCount = activeData.filter(d => d.manager === '강현준').length;
             const dueThisMonthData = activeData.filter(c => isDueThisMonth(c, CURRENT_MONTH));
@@ -1005,10 +1022,10 @@
                                 <div className="p-4 bg-gray-50 rounded-xl text-gray-700 text-2xl">📉</div>
                                 <div><p className="text-xs text-gray-400 font-bold mb-0.5">총 누적 해지율</p><p className="text-2xl font-black text-gray-800 leading-none">{cancelRate}%</p><p className="text-[11px] text-gray-500 mt-1.5">해지 {termCount}건</p></div>
                             </div>
-                            <div onClick={() => { setCurrentTab('active'); setFilterCollection(v => v === '미수금' ? '' : '미수금'); }}
-                                className={`p-5 rounded-2xl border shadow-sm flex items-center gap-4 cursor-pointer transition-all shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink ${filterCollection === '미수금' ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-300' : 'bg-white border-gray-100 hover:border-rose-300'}`}>
+                            <div onClick={() => { setCurrentTab('active'); setFilterDebtOrUnchecked(v => !v); }}
+                                className={`p-5 rounded-2xl border shadow-sm flex items-center gap-4 cursor-pointer transition-all shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink ${filterDebtOrUnchecked ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-300' : 'bg-white border-gray-100 hover:border-rose-300'}`}>
                                 <div className="p-4 bg-rose-50 rounded-xl text-rose-700 text-2xl">💰</div>
-                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">총 미수금 현황</p><p className="text-xl font-black text-red-600 leading-none">₩{totalUncollected.toLocaleString()}</p><p className="text-[11px] mt-1.5"><span className="text-gray-500">현재 미납 {uncollectedClientsCount}곳</span> <span className="text-rose-600 font-bold">· {filterCollection === '미수금' ? '클릭하여 해제' : '클릭하여 보기'}</span></p></div>
+                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">총 미수금 현황</p><p className="text-xl font-black text-red-600 leading-none">₩{totalUncollected.toLocaleString()}</p><p className="text-[11px] mt-1.5"><span className="text-gray-500">미납 {uncollectedClientsCount}곳 · {PREV_MONTH} 미확인 포함 {debtOrUncheckedCount}곳</span></p><p className="text-[11px] mt-0.5 text-rose-600 font-bold">{filterDebtOrUnchecked ? '클릭하여 해제' : '클릭하여 보기'}</p></div>
                             </div>
                             <div onClick={() => { setCurrentTab('active'); setFilterIssueOnly(v => !v); }}
                                 className={`p-5 rounded-2xl border shadow-sm flex items-center gap-4 cursor-pointer transition-all shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink ${filterIssueOnly ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-300' : 'bg-white border-gray-100 hover:border-amber-300'}`}>
