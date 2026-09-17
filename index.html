@@ -174,14 +174,25 @@
             const lastKnownServerRef = useRef(null);
             const lastSaveTimeRef = useRef(0);
             const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'done' | 'error'
+            const STAFF_LIST_ROW_ID = "__STAFF_LIST__"; // companies 테이블 안에 대원 목록을 저장해두는 특별한 행(row)의 id
 
             useEffect(() => {
                 if (dataFetched) return;
                 dataFetched = true;
-                sb.from('companies').select('payload')
+                sb.from('companies').select('id, payload')
                     .then(({ data: rows, error }) => {
                         if (error) throw error;
-                        const fetchedData = (rows || []).map(r => r.payload);
+                        const allRows = rows || [];
+                        const staffRow = allRows.find(r => r.id === STAFF_LIST_ROW_ID);
+                        const companyRows = allRows.filter(r => r.id !== STAFF_LIST_ROW_ID);
+
+                        // 🧑‍🤝‍🧑 대원 목록도 서버(Supabase)에서 같이 불러와서, 모든 기기에서 동일하게 보이도록
+                        if (staffRow && staffRow.payload && Array.isArray(staffRow.payload.list) && staffRow.payload.list.length > 0) {
+                            setStaffList(staffRow.payload.list);
+                            localStorage.setItem("mstc_staff_v1", JSON.stringify(staffRow.payload.list));
+                        }
+
+                        const fetchedData = companyRows.map(r => r.payload);
                         if (Array.isArray(fetchedData) && fetchedData.length > 0) {
                             const clean = dedupeAndSort(fetchedData);
                             setData(clean);
@@ -401,6 +412,10 @@
             const saveStaff = (list) => {
                 setStaffList(list);
                 localStorage.setItem("mstc_staff_v1", JSON.stringify(list));
+                // 🧑‍🤝‍🧑 다른 기기/다른 사람도 같은 대원 목록을 보도록 서버에도 저장
+                sb.from('companies')
+                    .upsert({ id: STAFF_LIST_ROW_ID, payload: { list }, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+                    .then(({ error }) => { if (error) console.log("대원 목록 서버 저장 실패", error); });
             };
 
             const handleLogoTap = () => {
@@ -906,8 +921,8 @@
             const debtOrUncheckedCount = activeData.filter(d =>
                 d.computedDebt > 0 || (d.payStatus !== '무료' && shouldHavePaymentRecord(d, PREV_MONTH) && !(d.paymentHistory || []).some(p => p.month === PREV_MONTH))
             ).length;
-            const leeCount = activeData.filter(d => d.manager === '이원식').length;
-            const kangCount = activeData.filter(d => d.manager === '강현준').length;
+            // 👥 대원 목록 기준으로 각자 몇 곳 담당인지 동적으로 계산 (이름 하드코딩 X)
+            const managerCounts = staffList.map(name => ({ name, count: activeData.filter(d => d.manager === name).length }));
             const dueThisMonthData = activeData.filter(c => isDueThisMonth(c, CURRENT_MONTH));
             const completedThisMonth = dueThisMonthData.filter(c => c.history && c.history.some(h => h.type === '방역' && h.date && h.date.startsWith(CURRENT_MONTH))).length;
             const delayedThisMonth = dueThisMonthData.length - completedThisMonth;
@@ -1021,7 +1036,7 @@
                         <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1 md:mx-0 md:px-0 md:grid md:grid-cols-5 md:overflow-visible md:pb-0 [&::-webkit-scrollbar]:hidden">
                             <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink">
                                 <div className="p-4 bg-[#E3F2EC] rounded-xl text-[#0B5E4D] text-2xl">👤</div>
-                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">운영중 거래처</p><p className="text-2xl font-black text-gray-800 leading-none">{activeData.length}</p><p className="text-[11px] text-gray-500 mt-1.5">이원식 {leeCount} · 강현준 {kangCount}</p></div>
+                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">운영중 거래처</p><p className="text-2xl font-black text-gray-800 leading-none">{activeData.length}</p><p className="text-[11px] text-gray-500 mt-1.5">{managerCounts.map(m => `${m.name} ${m.count}`).join(' · ')}</p></div>
                             </div>
                             <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink">
                                 <div className="p-4 bg-rose-50 rounded-xl text-rose-700 text-2xl">📅</div>
