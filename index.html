@@ -703,7 +703,7 @@
 
             const convertToActive = () => {
                 if(!confirm("전환하시겠습니까?")) return;
-                const updated = { ...selectedItem, tab: 'active', payStatus: '유료', contractStart: TODAY };
+                const updated = { ...selectedItem, tab: 'active', payStatus: '유료', contractStart: TODAY, cycle: selectedItem.cycle || '월1회' };
                 updateDataAndSync(data.map(item => item.id === updated.id ? updated : item)); setSelectedItem(updated); setCurrentTab('active');
             };
 
@@ -891,7 +891,7 @@
                     "상세주소": r.address || "",
                     "평수(면적)": r.area || "",
                     "방역시작일": r.contractStart || "",
-                    "방역주기": r.cycle || "",
+                    "방역주기": r.cycle || "월1회",
                     "방역구분": r.serviceType === "무료" ? "배민" : (r.serviceType || ""),
                     "결제방식": r.payMethod || "",
                     "결제상태": r.payStatus === "무료" ? "배민" : (r.payStatus || ""),
