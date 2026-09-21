@@ -2296,6 +2296,14 @@
             );
         }
 
+        // 🔄 뒤로가기/탭 전환 등으로 브라우저가 페이지를 "다시 실행" 안 하고 예전 화면을 그대로 복원하는 경우
+        // (bfcache) — 이럴 때 데이터가 예전 상태로 굳어있을 수 있어서, 감지되면 자동으로 새로고침
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                window.location.reload();
+            }
+        });
+
         ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
