@@ -451,6 +451,18 @@
             const [filterRegMonth, setFilterRegMonth] = useState("");
             const [filterIssueOnly, setFilterIssueOnly] = useState(false);
             const [filterUncheckedOnly, setFilterUncheckedOnly] = useState(false);
+            // 📅 "미확인" 체크 대상 월 — 기본은 지난 달(보통 수금 정리가 한 달 늦게 끝나므로), 필요하면 직접 바꿀 수 있음
+            const [uncheckedMonth, setUncheckedMonth] = useState(PREV_MONTH);
+            const recentMonthOptions = useMemo(() => {
+                const out = [];
+                let [y, m] = CURRENT_MONTH.split('-').map(Number);
+                for (let i = 0; i < 7; i++) {
+                    out.push(`${y}-${String(m).padStart(2, '0')}`);
+                    m -= 1;
+                    if (m < 1) { m = 12; y -= 1; }
+                }
+                return out;
+            }, []);
             const [filterDebtOrUnchecked, setFilterDebtOrUnchecked] = useState(false);
             const [filterFee, setFilterFee] = useState("");
             const [sortOrder, setSortOrder] = useState("name");
@@ -835,10 +847,10 @@
                     })());
                     const matchRegMonth = !filterRegMonth || normalizeMonth(r.contractStart) === filterRegMonth;
                     const matchIssue = !filterIssueOnly || (r.adminMemo && String(r.adminMemo).trim() !== '');
-                    const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && shouldHavePaymentRecord(r, CURRENT_MONTH) && !(r.paymentHistory || []).some(p => p.month === CURRENT_MONTH));
+                    const matchUnchecked = !filterUncheckedOnly || (r.payStatus !== '무료' && shouldHavePaymentRecord(r, uncheckedMonth) && !(r.paymentHistory || []).some(p => p.month === uncheckedMonth));
                     const matchDebtOrUnchecked = !filterDebtOrUnchecked || (
                         r.computedDebt > 0 ||
-                        (r.payStatus !== '무료' && shouldHavePaymentRecord(r, PREV_MONTH) && !(r.paymentHistory || []).some(p => p.month === PREV_MONTH))
+                        (r.payStatus !== '무료' && shouldHavePaymentRecord(r, uncheckedMonth) && !(r.paymentHistory || []).some(p => p.month === uncheckedMonth))
                     );
                     const feeNum = Number(String(r.fee || "0").replace(/[^0-9.-]/g, "")) || 0;
                     const matchFee = !filterFee || feeNum === Number(filterFee);
@@ -875,7 +887,7 @@
                 }
                 // 기본: 상호명 가나다 순 고정 정렬 (구글 시트 반환 순서와 무관)
                 return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
-            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, filterDebtOrUnchecked, filterCompletion, filterCycle, sortOrder, adminMode, filterFee]);
+            }, [enrichedData, currentTab, search, filterCity, filterDistrict, filterPayStatus, filterCollection, filterCollectionMonth, filterRegMonth, filterIssueOnly, filterUncheckedOnly, uncheckedMonth, filterDebtOrUnchecked, filterCompletion, filterCycle, sortOrder, adminMode, filterFee]);
 
             const TAB_LABELS = { active: "방역거래처", prospect: "영업처", paused: "일시중지", terminated: "해지거래처" };
 
@@ -916,10 +928,10 @@
 
             const activeData = enrichedData.filter(d => d.tab === 'active');
             const issueCount = activeData.filter(d => d.adminMemo && String(d.adminMemo).trim() !== '').length;
-            const uncheckedThisMonthCount = activeData.filter(d => d.payStatus !== '무료' && shouldHavePaymentRecord(d, CURRENT_MONTH) && !(d.paymentHistory || []).some(p => p.month === CURRENT_MONTH)).length;
-            // 🚨💰 미수금이거나, 지난 달(PREV_MONTH) 수금 기록이 아예 없는 업체 — 운영중 거래처 기준
+            const uncheckedThisMonthCount = activeData.filter(d => d.payStatus !== '무료' && shouldHavePaymentRecord(d, uncheckedMonth) && !(d.paymentHistory || []).some(p => p.month === uncheckedMonth)).length;
+            // 🚨💰 미수금이거나, 선택한 달(uncheckedMonth) 수금 기록이 아예 없는 업체 — 운영중 거래처 기준
             const debtOrUncheckedCount = activeData.filter(d =>
-                d.computedDebt > 0 || (d.payStatus !== '무료' && shouldHavePaymentRecord(d, PREV_MONTH) && !(d.paymentHistory || []).some(p => p.month === PREV_MONTH))
+                d.computedDebt > 0 || (d.payStatus !== '무료' && shouldHavePaymentRecord(d, uncheckedMonth) && !(d.paymentHistory || []).some(p => p.month === uncheckedMonth))
             ).length;
             // 👥 대원 목록 기준으로 각자 몇 곳 담당인지 동적으로 계산 (이름 하드코딩 X)
             const managerCounts = staffList.map(name => ({ name, count: activeData.filter(d => d.manager === name).length }));
@@ -1049,7 +1061,7 @@
                             <div onClick={() => { setCurrentTab('active'); setFilterDebtOrUnchecked(v => !v); }}
                                 className={`p-5 rounded-2xl border shadow-sm flex items-center gap-4 cursor-pointer transition-all shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink ${filterDebtOrUnchecked ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-300' : 'bg-white border-gray-100 hover:border-rose-300'}`}>
                                 <div className="p-4 bg-rose-50 rounded-xl text-rose-700 text-2xl">💰</div>
-                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">총 미수금 현황</p><p className="text-xl font-black text-red-600 leading-none">₩{totalUncollected.toLocaleString()}</p><p className="text-[11px] mt-1.5"><span className="text-gray-500">미납 {uncollectedClientsCount}곳 · {PREV_MONTH} 미확인 포함 {debtOrUncheckedCount}곳</span></p><p className="text-[11px] mt-0.5 text-rose-600 font-bold">{filterDebtOrUnchecked ? '클릭하여 해제' : '클릭하여 보기'}</p></div>
+                                <div><p className="text-xs text-gray-400 font-bold mb-0.5">총 미수금 현황</p><p className="text-xl font-black text-red-600 leading-none">₩{totalUncollected.toLocaleString()}</p><p className="text-[11px] mt-1.5"><span className="text-gray-500">미납 {uncollectedClientsCount}곳 · </span><select value={uncheckedMonth} onClick={e => e.stopPropagation()} onChange={e => { e.stopPropagation(); setUncheckedMonth(e.target.value); }} className="text-[11px] font-bold text-rose-700 bg-white border border-rose-200 rounded px-1 py-0.5 outline-none cursor-pointer">{recentMonthOptions.map(m => <option key={m} value={m}>{m}</option>)}</select><span className="text-gray-500"> 미확인 포함 {debtOrUncheckedCount}곳</span></p><p className="text-[11px] mt-0.5 text-rose-600 font-bold">{filterDebtOrUnchecked ? '클릭하여 해제' : '클릭하여 보기'}</p></div>
                             </div>
                             <div onClick={() => { setCurrentTab('active'); setFilterIssueOnly(v => !v); }}
                                 className={`p-5 rounded-2xl border shadow-sm flex items-center gap-4 cursor-pointer transition-all shrink-0 w-[78%] sm:w-[45%] snap-start md:w-auto md:shrink ${filterIssueOnly ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-300' : 'bg-white border-gray-100 hover:border-amber-300'}`}>
@@ -1246,10 +1258,15 @@
                                             </div>
                                             <button onClick={() => adminMode ? setStaffModal(true) : alert("🔒 관리자 모드에서만 이용 가능합니다.")} className={`px-4 py-2.5 border rounded-xl text-xs font-bold flex items-center gap-1 shadow-sm ${adminMode ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100' : 'bg-white border-gray-300 text-gray-400 cursor-not-allowed'}`}>⚙️ 대원 관리{adminMode ? '' : ' 🔒'}</button>
                                             {adminMode && (
-                                            <button onClick={() => { setCurrentTab('active'); setFilterUncheckedOnly(v => !v); }}
-                                                className={`px-4 py-2.5 border rounded-xl text-xs font-bold flex items-center gap-1 shadow-sm transition-all ${filterUncheckedOnly ? 'bg-rose-600 border-rose-600 text-white' : 'bg-white border-rose-300 text-rose-700 hover:bg-rose-50'}`}>
-                                                📛 {CURRENT_MONTH_NUM}월 미확인 ({uncheckedThisMonthCount})
-                                            </button>
+                                            <div className="flex items-center gap-1">
+                                                <select value={uncheckedMonth} onChange={e => setUncheckedMonth(e.target.value)} className="text-xs p-2.5 rounded-xl border border-rose-300 bg-white outline-none font-bold text-rose-700">
+                                                    {recentMonthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                                                </select>
+                                                <button onClick={() => { setCurrentTab('active'); setFilterUncheckedOnly(v => !v); }}
+                                                    className={`px-4 py-2.5 border rounded-xl text-xs font-bold flex items-center gap-1 shadow-sm transition-all ${filterUncheckedOnly ? 'bg-rose-600 border-rose-600 text-white' : 'bg-white border-rose-300 text-rose-700 hover:bg-rose-50'}`}>
+                                                    📛 {parseInt(uncheckedMonth.split('-')[1], 10)}월 미확인 ({uncheckedThisMonthCount})
+                                                </button>
+                                            </div>
                                             )}
                                             <button onClick={exportToExcel} className="px-4 py-2.5 bg-green-50 border border-green-300 text-green-800 rounded-xl text-xs font-bold flex items-center gap-1 shadow-sm hover:bg-green-100">📥 엑셀 다운로드 ({currentList.length}건)</button>
                                             {adminMode && (
