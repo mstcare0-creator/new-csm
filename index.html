@@ -482,7 +482,7 @@
             const [editError, setEditError] = useState("");
 
             const [showHistoryForm, setShowHistoryForm] = useState(false);
-            const [historyForm, setHistoryForm] = useState({ date: TODAY, time: "", type: "방역", methods: ["살충"], chemicals: ["롱다운플러스"], note: "", issue: "", author: "이원식" });
+            const [historyForm, setHistoryForm] = useState({ date: TODAY, time: "10:00", type: "방역", methods: ["살충"], chemicals: ["롱다운플러스"], note: "", issue: "", author: "이원식" });
             const [editingHistoryId, setEditingHistoryId] = useState(null);
 
             const [showPayForm, setShowPayForm] = useState(false);
@@ -737,10 +737,10 @@
                 let updatedHistoryList;
                 if (editingHistoryId) {
                     updatedHistoryList = selectedItem.history.map(h => 
-                        h.id === editingHistoryId ? { ...h, date: historyForm.date, time: historyForm.time, type: historyForm.type, author: historyForm.author, content: contentStr, issue: historyForm.issue || "", methods: historyForm.type === "방역" ? historyForm.methods : [], chemicals: historyForm.type === "방역" ? historyForm.chemicals : [] } : h
+                        h.id === editingHistoryId ? { ...h, date: historyForm.date, time: historyForm.time || "10:00", type: historyForm.type, author: historyForm.author, content: contentStr, issue: historyForm.issue || "", methods: historyForm.type === "방역" ? historyForm.methods : [], chemicals: historyForm.type === "방역" ? historyForm.chemicals : [] } : h
                     );
                 } else {
-                    const newLog = { id: Date.now(), date: historyForm.date, time: historyForm.time, type: historyForm.type, author: historyForm.author, content: contentStr, issue: historyForm.issue || "", methods: historyForm.type === "방역" ? historyForm.methods : [], chemicals: historyForm.type === "방역" ? historyForm.chemicals : [] };
+                    const newLog = { id: Date.now(), date: historyForm.date, time: historyForm.time || "10:00", type: historyForm.type, author: historyForm.author, content: contentStr, issue: historyForm.issue || "", methods: historyForm.type === "방역" ? historyForm.methods : [], chemicals: historyForm.type === "방역" ? historyForm.chemicals : [] };
                     updatedHistoryList = [newLog, ...(selectedItem.history || [])];
                 }
                 const updatedItem = { ...selectedItem, history: updatedHistoryList };
@@ -749,7 +749,7 @@
             };
 
             const handleEditHistoryInit = (h) => {
-                setHistoryForm({ date: h.date, time: h.time || h.startTime || "", type: h.type, author: h.author || selectedItem.manager, methods: h.methods || [], chemicals: h.chemicals || [], note: h.type === "방역" ? "" : h.content, issue: h.issue || "" });
+                setHistoryForm({ date: h.date, time: h.time || h.startTime || "10:00", type: h.type, author: h.author || selectedItem.manager, methods: h.methods || [], chemicals: h.chemicals || [], note: h.type === "방역" ? "" : h.content, issue: h.issue || "" });
                 setEditingHistoryId(h.id); setShowHistoryForm(true); setShowPayForm(false); setIsEditing(false);
             };
 
@@ -1652,7 +1652,7 @@
                                             <div className="space-y-4 animate-fade-in">
                                                 {!showHistoryForm && (
                                                     <button onClick={() => {
-                                                        setHistoryForm({ date: TODAY, time: "", type: "방역", methods: ["살충"], chemicals: ["롱다운플러스"], note: "", author: selectedItem.manager });
+                                                        setHistoryForm({ date: TODAY, time: "10:00", type: "방역", methods: ["살충"], chemicals: ["롱다운플러스"], note: "", author: selectedItem.manager });
                                                         setEditingHistoryId(null);
                                                         setShowHistoryForm(true);
                                                     }} className="w-full bg-emerald-50 text-emerald-800 font-bold text-xs py-3 rounded-xl border border-emerald-200 hover:bg-emerald-100">+ 새로운 방역 기록 추가</button>
