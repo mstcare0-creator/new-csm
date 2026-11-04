@@ -37,8 +37,69 @@
         const SUPABASE_ANON_KEY = "sb_publishable_ciwf-suIq1KH172gOiInZw_HHKchiaP";
         const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+        // 🔐 로그인 필수 여부 (Supabase Auth에 직원 계정을 만든 뒤 true로 사용)
+        const REQUIRE_LOGIN = true;
+        // 👑 관리자 모드를 켤 수 있는 계정 (이 이메일로 로그인한 사람만 가능)
+        const ID_DOMAIN = "@mstc-crm.com"; // 아이디 뒤에 자동으로 붙는 내부용 주소 (직원은 몰라도 됨)
+        const ADMIN_EMAILS = ["admin" + ID_DOMAIN, "mstcare0@gmail.com"];
+        const toLoginId = (email) => (email || "").endsWith(ID_DOMAIN) ? email.slice(0, -ID_DOMAIN.length) : (email || "");
+
+        // 💾 하루 1번 자동 백업: 처음 접속한 사람의 브라우저가 전체 데이터를 Supabase 저장소(backups)에 파일로 저장 (최근 30일 보관)
+        async function runDailyBackup(rows, today) {
+            try {
+                const fname = `${today}.json`;
+                const { data: files, error: listErr } = await sb.storage.from('backups').list('', { limit: 200 });
+                if (listErr) return;
+                if ((files || []).some(f => f.name === fname)) return;
+                const blob = new Blob([JSON.stringify({ savedAt: new Date().toISOString(), count: rows.length, rows })], { type: 'application/json' });
+                const { error: upErr } = await sb.storage.from('backups').upload(fname, blob, { contentType: 'application/json', upsert: false });
+                if (upErr) return;
+                const names = (files || []).map(f => f.name).concat(fname).filter(n => /^\d{4}-\d{2}-\d{2}\.json$/.test(n)).sort().reverse();
+                const old = names.slice(30);
+                if (old.length) await sb.storage.from('backups').remove(old);
+            } catch (e) { console.log("자동 백업 실패", e); }
+        }
+
+        function LoginScreen() {
+            const [email, setEmail] = React.useState("");
+            const [pw, setPw] = React.useState("");
+            const [err, setErr] = React.useState("");
+            const [busy, setBusy] = React.useState(false);
+            const submit = async (e) => {
+                e.preventDefault(); setBusy(true); setErr("");
+                const { error } = await sb.auth.signInWithPassword({ email: (email.includes("@") ? email.trim() : email.trim().toLowerCase() + ID_DOMAIN), password: pw });
+                if (error) setErr("로그인 실패: 아이디/비밀번호를 확인해주세요.");
+                setBusy(false);
+            };
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+                    <form onSubmit={submit} className="bg-white w-full max-w-sm p-6 rounded-2xl shadow-lg space-y-3">
+                        <h1 className="text-xl font-extrabold text-[#0B5E4D] text-center">MSTC방역 CRM</h1>
+                        <p className="text-xs text-gray-500 text-center">직원 계정으로 로그인해주세요.</p>
+                        <input type="text" value={email} onChange={e => setEmail(e.target.value)} placeholder="아이디" className="w-full p-3 border rounded-xl outline-none" autoComplete="username" autoCapitalize="none" required />
+                        <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="비밀번호" className="w-full p-3 border rounded-xl outline-none" autoComplete="current-password" required />
+                        {err && <p className="text-xs text-rose-600 font-bold">{err}</p>}
+                        <button disabled={busy} className="w-full bg-[#0B5E4D] text-white font-bold py-3 rounded-xl">{busy ? "로그인 중..." : "로그인"}</button>
+                    </form>
+                </div>
+            );
+        }
+
+        function Root() {
+            const [session, setSession] = React.useState(undefined);
+            React.useEffect(() => {
+                sb.auth.getSession().then(({ data }) => setSession(data.session || null));
+                const { data: sub } = sb.auth.onAuthStateChange((_ev, sess) => setSession(sess || null));
+                return () => sub.subscription.unsubscribe();
+            }, []);
+            if (!REQUIRE_LOGIN) return <App user={session ? session.user : null} />;
+            if (session === undefined) return <div className="p-10 text-center text-gray-400">불러오는 중...</div>;
+            if (!session) return <LoginScreen />;
+            return <App user={session.user} />;
+        }
+
         const CERT_ISSUER = { name: "주)모바일솔루션즈", address: "부산 강서구 명지국제2로28번길 24, 620호", reps: "구승재, 구태원" };
-        const TODAY = new Date().toISOString().split('T')[0];
+        const TODAY = new Date(Date.now() + 9 * 3600 * 1000).toISOString().split('T')[0]; // 한국시간 기준 (자정~오전9시에도 오늘 날짜 유지)
         const CURRENT_MONTH = TODAY.slice(0, 7);
         const CURRENT_MONTH_NUM = parseInt(CURRENT_MONTH.split('-')[1], 10);
         // 📅 "지난 달" — 이번 달은 아직 안 끝났을 수 있어서, "수금 미입력" 체크는 지난 달 기준으로
@@ -131,7 +192,7 @@
             return isDueThisMonth(item, monthStr);
         }
 
-        function App() {
+        function App({ user }) {
             const [data, setData] = useState([]);
             const [loading, setLoading] = useState(true);
 
@@ -173,16 +234,22 @@
             // 🛟 마지막으로 확인한 "서버 데이터" 스냅샷 — 다른 기기/탭에서 그 사이에 변경했는지 감지용
             const lastKnownServerRef = useRef(null);
             const lastSaveTimeRef = useRef(0);
+            const lastSyncRef = useRef("");
+            const [remoteNotice, setRemoteNotice] = useState("");
+            const selectedItemRef = useRef(null);
+            const editingRef = useRef(false);
             const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'done' | 'error'
             const STAFF_LIST_ROW_ID = "__STAFF_LIST__"; // companies 테이블 안에 대원 목록을 저장해두는 특별한 행(row)의 id
 
             useEffect(() => {
                 if (dataFetched) return;
                 dataFetched = true;
-                sb.from('companies').select('id, payload')
+                sb.from('companies').select('id, payload, updated_at')
                     .then(({ data: rows, error }) => {
                         if (error) throw error;
                         const allRows = rows || [];
+                        lastSyncRef.current = allRows.reduce((mx, r) => (r.updated_at && r.updated_at > mx ? r.updated_at : mx), "");
+                        runDailyBackup(allRows.map(r => ({ id: r.id, payload: r.payload })), TODAY);
                         const staffRow = allRows.find(r => r.id === STAFF_LIST_ROW_ID);
                         const companyRows = allRows.filter(r => r.id !== STAFF_LIST_ROW_ID);
 
@@ -218,6 +285,81 @@
                 return out;
             };
 
+            // 🔄 다른 사람이 바꾼 내용을 주기적으로 자동 반영 (화면 다시 켤 때 + 45초마다)
+            const syncingRef = useRef(false);
+            const refreshFromServer = async () => {
+                if (syncingRef.current || loading) return;
+                if (saveStatus === 'saving' || Date.now() - lastSaveTimeRef.current < 6000) return;
+                syncingRef.current = true;
+                try {
+                    const since = lastSyncRef.current ? new Date(new Date(lastSyncRef.current).getTime() - 5 * 60 * 1000).toISOString() : null;
+                    let q = sb.from('companies').select('id, payload, updated_at');
+                    if (since) q = q.gt('updated_at', since);
+                    const { data: rows, error } = await q;
+                    if (error) return;
+                    const { data: idRows, error: idErr } = await sb.from('companies').select('id');
+                    if (Date.now() - lastSaveTimeRef.current < 6000) return;
+                    const serverIds = (!idErr && idRows) ? new Set(idRows.map(r => r.id)) : null;
+                    let changedNames = [];
+                    setData(prev => {
+                        const map = new Map(prev.map(i => [i.id, i]));
+                        let changed = false;
+                        (rows || []).forEach(r => {
+                            if (r.id === STAFF_LIST_ROW_ID) { if (r.payload && Array.isArray(r.payload.list) && r.payload.list.length) setStaffList(r.payload.list); return; }
+                            const cur = map.get(r.id);
+                            if (!cur || stableStringify(cur) !== stableStringify(r.payload)) { map.set(r.id, r.payload); changed = true; changedNames.push(r.payload.name); }
+                        });
+                        if (serverIds && serverIds.size >= 5) {
+                            prev.forEach(i => { if (i.id && !serverIds.has(i.id)) { map.delete(i.id); changed = true; } });
+                        }
+                        if (!changed) return prev;
+                        const next = dedupeAndSort([...map.values()]);
+                        try { localStorage.setItem("mstc_crm_data_v50", JSON.stringify(next)); } catch (e) {}
+                        const cur = selectedItemRef.current;
+                        if (cur) {
+                            const upd = next.find(i => i.id === cur.id);
+                            if (upd && stableStringify(upd) !== stableStringify(cur)) {
+                                if (editingRef.current) setRemoteNotice(`⚠️ '${cur.name}' 업체를 다른 사람이 방금 수정했습니다. 지금 저장하면 덮어쓸 수 있으니 창을 닫고 다시 열어 확인해주세요.`);
+                                else setSelectedItem(upd);
+                            }
+                        }
+                        return next;
+                    });
+                    (rows || []).forEach(r => { if (r.updated_at && r.updated_at > lastSyncRef.current) lastSyncRef.current = r.updated_at; });
+                } finally { syncingRef.current = false; }
+            };
+            useEffect(() => {
+                const onVis = () => { if (document.visibilityState === 'visible') refreshFromServer(); };
+                document.addEventListener('visibilitychange', onVis);
+                const t = setInterval(() => { if (document.visibilityState === 'visible') refreshFromServer(); }, 45000);
+                return () => { document.removeEventListener('visibilitychange', onVis); clearInterval(t); };
+            });
+
+            // 🕘 변경 이력 기록 (누가 언제 무엇을 바꿨는지) — 실패해도 저장 자체에는 영향 없음
+            const shortVal = (v) => { const t = typeof v === 'object' ? JSON.stringify(v) : String(v ?? ""); return t.length > 60 ? t.slice(0, 60) + "…" : t; };
+            const logChanges = (patch, prevById, deletedIds) => {
+                const actor = user && user.email ? toLoginId(user.email) : "비로그인";
+                const rows = [];
+                patch.forEach(item => {
+                    const prev = prevById[item.id];
+                    if (!prev) { rows.push({ company_id: item.id, company_name: item.name || "", actor, kind: "create", changes: [] }); return; }
+                    const changes = [];
+                    Object.keys({ ...prev, ...item }).forEach(k => {
+                        if (k === 'history' || k === 'paymentHistory' || k === 'contracts') {
+                            const a = (prev[k] || []).length, b = (item[k] || []).length;
+                            const label = k === 'history' ? '방역기록' : k === 'paymentHistory' ? '수금기록' : '계약서';
+                            if (a !== b) changes.push({ k: label, from: a + "건", to: b + "건" });
+                            else if (stableStringify(prev[k] || []) !== stableStringify(item[k] || [])) changes.push({ k: label, from: "수정됨", to: "" });
+                        } else if (stableStringify(prev[k] ?? "") !== stableStringify(item[k] ?? "")) {
+                            changes.push({ k, from: shortVal(prev[k]), to: shortVal(item[k]) });
+                        }
+                    });
+                    if (changes.length) rows.push({ company_id: item.id, company_name: item.name || "", actor, kind: "update", changes });
+                });
+                deletedIds.forEach(id => { const p = prevById[id]; rows.push({ company_id: id, company_name: p ? p.name : "", actor, kind: "delete", changes: [] }); });
+                if (rows.length) sb.from('crm_changes').insert(rows).then(({ error }) => { if (error) console.log("변경 이력 기록 실패", error.message); });
+            };
+
             const updateDataAndSync = (newData) => {
                 const clean = dedupeAndSort(newData);
 
@@ -249,6 +391,7 @@
                 localStorage.setItem("mstc_crm_data_v50", JSON.stringify(clean));
                 lastKnownServerRef.current = dataFingerprint(clean);
                 lastSaveTimeRef.current = Date.now();
+                logChanges(patch, prevById, deletedIds);
 
                 if (patch.length === 0 && deletedIds.length === 0) {
                     return true; // 실제로 바뀐 게 없으면 서버에 보낼 필요 없음
@@ -427,6 +570,11 @@
                         alert("관리자 모드가 해제됐습니다.");
                         return;
                     }
+                    if (REQUIRE_LOGIN) {
+                        if (user && ADMIN_EMAILS.includes(user.email)) { setAdminMode(true); alert("✅ 관리자 모드 활성화됐습니다."); }
+                        else alert("🚨 관리자 계정으로 로그인한 경우에만 사용할 수 있습니다.");
+                        return;
+                    }
                     const pwd = prompt("🔒 관리자 비밀번호를 입력하세요.");
                     if (pwd === "7903") {
                         setAdminMode(true);
@@ -483,6 +631,10 @@
 
             const [showHistoryForm, setShowHistoryForm] = useState(false);
             const [contractBusy, setContractBusy] = useState(false);
+            const [toolsModal, setToolsModal] = useState(null); // null | 'collect' | 'schedule' | 'newcount'
+            const [toolMonth, setToolMonth] = useState(CURRENT_MONTH);
+            const [toolMgr, setToolMgr] = useState("");
+            const [collectSel, setCollectSel] = useState({});
             const [historyForm, setHistoryForm] = useState({ date: TODAY, time: "10:00", type: "방역", methods: ["살충"], chemicals: ["롱다운플러스"], note: "", issue: "", author: "이원식" });
             const [editingHistoryId, setEditingHistoryId] = useState(null);
 
@@ -753,6 +905,77 @@
                 setHistoryForm({ date: h.date, time: h.time || h.startTime || "10:00", type: h.type, author: h.author || selectedItem.manager, methods: h.methods || [], chemicals: h.chemicals || [], note: h.type === "방역" ? "" : h.content, issue: h.issue || "" });
                 setEditingHistoryId(h.id); setShowHistoryForm(true); setShowPayForm(false); setIsEditing(false);
             };
+
+            selectedItemRef.current = selectedItem;
+            editingRef.current = !!(isEditing || showHistoryForm || showPayForm);
+            const [changeRows, setChangeRows] = useState([]);
+            const [changeMsg, setChangeMsg] = useState("");
+            useEffect(() => {
+                if (toolsModal !== 'history') return;
+                setChangeMsg("불러오는 중...");
+                sb.from('crm_changes').select('*').order('changed_at', { ascending: false }).limit(200)
+                    .then(({ data: rows, error }) => {
+                        if (error) { setChangeMsg("이력을 불러오지 못했습니다: " + error.message + " (SQL 설정이 필요할 수 있어요)"); setChangeRows([]); }
+                        else { setChangeRows(rows || []); setChangeMsg(rows && rows.length ? "" : "아직 기록된 변경이 없습니다."); }
+                    });
+            }, [toolsModal]);
+            const downloadBackup = () => {
+                const blob = new Blob([JSON.stringify({ savedAt: new Date().toISOString(), staffList, companies: data }, null, 1)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob); a.download = `mstc_backup_${TODAY}.json`; a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+            };
+            const visitDayOf = (item, monthStr) => {
+                const dt = normalizeDateFull(item.contractStart) || "";
+                const day = parseInt(dt.split('-')[2], 10);
+                const [y, m] = monthStr.split('-').map(Number);
+                const last = new Date(y, m, 0).getDate();
+                return Math.min(isNaN(day) ? 1 : day, last);
+            };
+            const scheduleRows = useMemo(() => {
+                return data.filter(d => d.tab === 'active' && d.id && (d.payStatus === '유료' || d.payStatus === '무료') && isDueThisMonth(d, toolMonth) && (!d.contractStart || (normalizeMonth(d.contractStart) || "") <= toolMonth))
+                    .filter(d => !toolMgr || d.manager === toolMgr)
+                    .map(d => {
+                        const day = visitDayOf(d, toolMonth);
+                        const dateStr = `${toolMonth}-${String(day).padStart(2, '0')}`;
+                        const done = (d.history || []).some(h => h.type === '방역' && (normalizeDateFull(h.date) || "").slice(0, 7) === toolMonth);
+                        const state = done ? 'done' : (dateStr < TODAY ? 'late' : (dateStr === TODAY ? 'today' : 'plan'));
+                        return { item: d, day, dateStr, done, state };
+                    }).sort((a, b) => a.day - b.day || (a.item.name || "").localeCompare(b.item.name || "", "ko"));
+            }, [data, toolMonth, toolMgr]);
+            const todayVisitCount = useMemo(() => data.filter(d => d.tab === 'active' && (d.payStatus === '유료' || d.payStatus === '무료') && isDueThisMonth(d, CURRENT_MONTH) && visitDayOf(d, CURRENT_MONTH) === parseInt(TODAY.slice(8), 10) && !(d.history || []).some(h => h.type === '방역' && (normalizeDateFull(h.date) || "").slice(0, 7) === CURRENT_MONTH)).length, [data]);
+            const collectRows = useMemo(() => data.filter(d => d.tab === 'active' && d.payStatus === '유료' && shouldHavePaymentRecord(d, toolMonth))
+                .filter(d => !toolMgr || d.manager === toolMgr)
+                .map(d => {
+                    const rec = (d.paymentHistory || []).find(p => p.month === toolMonth && p.status === '수금완료');
+                    const unpaid = (d.paymentHistory || []).find(p => p.month === toolMonth && p.status === '미수금');
+                    return { item: d, paid: !!rec, status: rec ? '수금완료' : (unpaid ? '미수금' : '미입력') };
+                }).sort((a, b) => (a.paid - b.paid) || (a.item.name || "").localeCompare(b.item.name || "", "ko")), [data, toolMonth, toolMgr]);
+            const handleBulkCollect = () => {
+                const ids = Object.keys(collectSel).filter(id => collectSel[id]);
+                if (!ids.length) { alert("체크한 업체가 없습니다."); return; }
+                if (!confirm(`${ids.length}개 업체를 ${toolMonth} 수금완료로 처리하시겠습니까?`)) return;
+                const newData = data.map(d => {
+                    if (!ids.includes(d.id)) return d;
+                    const ph = d.paymentHistory || [];
+                    if (ph.some(p => p.month === toolMonth && p.status === '수금완료')) return d;
+                    const unpaidIdx = ph.findIndex(p => p.month === toolMonth && p.status === '미수금');
+                    if (unpaidIdx >= 0) return { ...d, paymentHistory: ph.map((p, i) => i === unpaidIdx ? { ...p, status: '수금완료', note: (p.note ? p.note + ' / ' : '') + '일괄 수금체크' } : p) };
+                    const rec = { id: Date.now() + Math.random(), month: toolMonth, amount: d.fee || "30000", status: '수금완료', method: d.payMethod || '계좌이체', note: '일괄 수금체크', serviceItem: '정기방역' };
+                    return { ...d, paymentHistory: [rec, ...ph] };
+                });
+                updateDataAndSync(newData);
+                setCollectSel({});
+            };
+            const newCountRows = useMemo(() => {
+                const list = data.filter(d => d.tab !== 'prospect' && d.payStatus !== '영업실패' && d.id && normalizeMonth(d.contractStart) === toolMonth);
+                const names = [...staffList];
+                list.forEach(d => { if (d.manager && !names.includes(d.manager)) names.push(d.manager); });
+                const rows = names.map(n => ({ name: n, items: list.filter(d => d.manager === n) }));
+                const noMgr = list.filter(d => !d.manager);
+                if (noMgr.length) rows.push({ name: '(담당자 없음)', items: noMgr });
+                return { rows, total: list.length };
+            }, [data, toolMonth, staffList]);
 
             const handleContractUpload = async (e) => {
                 const file = e.target.files && e.target.files[0];
@@ -1292,6 +1515,7 @@
                                                     <button onClick={() => setFilterFee("")} className="text-gray-400 hover:text-gray-700 text-xs px-1">✕</button>
                                                 )}
                                             </div>
+                                            <button onClick={() => setToolsModal('schedule')} className="relative px-4 py-2.5 border rounded-xl text-xs font-bold flex items-center gap-1 shadow-sm bg-white border-[#0B5E4D] text-[#0B5E4D]">🧰 업무도구{todayVisitCount > 0 && <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full text-[10px] px-1.5 py-0.5">{todayVisitCount}</span>}</button>
                                             <button onClick={() => adminMode ? setStaffModal(true) : alert("🔒 관리자 모드에서만 이용 가능합니다.")} className={`px-4 py-2.5 border rounded-xl text-xs font-bold flex items-center gap-1 shadow-sm ${adminMode ? 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100' : 'bg-white border-gray-300 text-gray-400 cursor-not-allowed'}`}>⚙️ 대원 관리{adminMode ? '' : ' 🔒'}</button>
                                             {adminMode && (
                                             <div className="flex items-center gap-1">
@@ -2127,6 +2351,101 @@
                     )}
 
                     {/* ── 미수금 자동 처리 모달 ── */}
+                    {remoteNotice && (
+                        <div className="fixed top-2 left-2 right-2 z-[90] bg-amber-100 border border-amber-400 text-amber-900 text-xs font-bold p-3 rounded-xl shadow-lg flex justify-between gap-2">
+                            <span>{remoteNotice}</span><button onClick={() => setRemoteNotice("")}>✕</button>
+                        </div>
+                    )}
+                    {toolsModal && (
+                        <div className="fixed inset-0 z-[70] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setToolsModal(null)}>
+                            <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                                <div className="p-3 border-b flex items-center justify-between gap-2">
+                                    <div className="flex gap-1 text-xs font-bold overflow-x-auto">
+                                        <button onClick={() => setToolsModal('schedule')} className={`px-3 py-1.5 rounded-lg whitespace-nowrap ${toolsModal === 'schedule' ? 'bg-[#0B5E4D] text-white' : 'bg-gray-100'}`}>📅 방역 일정</button>
+                                        {adminMode && <button onClick={() => setToolsModal('collect')} className={`px-3 py-1.5 rounded-lg whitespace-nowrap ${toolsModal === 'collect' ? 'bg-[#0B5E4D] text-white' : 'bg-gray-100'}`}>💰 수금 일괄</button>}
+                                        {adminMode && <button onClick={() => setToolsModal('newcount')} className={`px-3 py-1.5 rounded-lg whitespace-nowrap ${toolsModal === 'newcount' ? 'bg-[#0B5E4D] text-white' : 'bg-gray-100'}`}>🆕 대원별 신규</button>}
+                                        {adminMode && <button onClick={() => setToolsModal('history')} className={`px-3 py-1.5 rounded-lg whitespace-nowrap ${toolsModal === 'history' ? 'bg-[#0B5E4D] text-white' : 'bg-gray-100'}`}>🕘 변경 이력</button>}
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        {adminMode && <button onClick={downloadBackup} className="text-[11px] px-2 py-1 border rounded-lg font-bold">💾 백업</button>}
+                                        {user && <button onClick={() => { if (confirm('로그아웃 하시겠습니까?')) sb.auth.signOut(); }} className="text-[11px] px-2 py-1 border rounded-lg font-bold text-gray-500">로그아웃</button>}
+                                        <button onClick={() => setToolsModal(null)} className="text-gray-500 text-lg px-2">✕</button>
+                                    </div>
+                                </div>
+                                {user && <p className="px-3 text-[10px] text-gray-400">로그인: {toLoginId(user.email)}</p>}
+                                <div className="p-3 flex gap-2 text-xs">
+                                    <select value={toolMonth} onChange={e => setToolMonth(e.target.value)} className="p-2 border rounded-lg font-bold">
+                                        {recentMonthOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    {(toolsModal === 'schedule' || toolsModal === 'collect') && (
+                                        <select value={toolMgr} onChange={e => setToolMgr(e.target.value)} className="p-2 border rounded-lg font-bold">
+                                            <option value="">전체 대원</option>
+                                            {staffList.map(n => <option key={n} value={n}>{n}</option>)}
+                                        </select>
+                                    )}
+                                </div>
+                                <div className="px-3 pb-3 overflow-y-auto flex-1 text-xs">
+                                    {toolsModal === 'schedule' && (
+                                        <div>
+                                            <p className="text-gray-500 mb-2">방역 시작일의 '일'을 방문 예정일로 계산합니다. 이번 달 방역 기록이 있으면 완료로 표시돼요. (분기 업체는 해당 달만 표시)</p>
+                                            <p className="font-bold mb-2">총 {scheduleRows.length}건 · 완료 {scheduleRows.filter(r => r.done).length} · 지연 {scheduleRows.filter(r => r.state === 'late').length}</p>
+                                            {scheduleRows.map(r => (
+                                                <div key={r.item.id} onClick={() => { setSelectedItem(r.item); setToolsModal(null); }} className="flex items-center gap-2 py-2 border-t cursor-pointer">
+                                                    <span className="w-12 font-bold text-gray-700">{parseInt(r.dateStr.slice(5, 7), 10)}/{r.day}</span>
+                                                    <span className="flex-1 truncate font-bold">{r.item.name}</span>
+                                                    <span className="text-gray-500 shrink-0">{r.item.manager}</span>
+                                                    <span className={`shrink-0 px-2 py-0.5 rounded-full font-bold ${r.state === 'done' ? 'bg-green-100 text-green-700' : r.state === 'late' ? 'bg-rose-100 text-rose-700' : r.state === 'today' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{r.state === 'done' ? '완료' : r.state === 'late' ? '지연' : r.state === 'today' ? '오늘' : '예정'}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {toolsModal === 'collect' && adminMode && (
+                                        <div>
+                                            <p className="text-gray-500 mb-2">{toolMonth} 수금 대상(유료)입니다. 입금 확인된 업체를 체크하고 한 번에 수금완료로 처리하세요. 이미 '미수금'으로 등록된 건은 수금완료로 바뀝니다.</p>
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="font-bold">미수금·미입력 {collectRows.filter(r => !r.paid).length}건 / 전체 {collectRows.length}건</span>
+                                                <button onClick={() => { const all = {}; collectRows.filter(r => !r.paid).forEach(r => all[r.item.id] = true); setCollectSel(Object.keys(collectSel).length ? {} : all); }} className="px-2 py-1 border rounded-lg font-bold">전체선택/해제</button>
+                                            </div>
+                                            {collectRows.map(r => (
+                                                <label key={r.item.id} className={`flex items-center gap-2 py-2 border-t ${r.paid ? 'opacity-40' : ''}`}>
+                                                    <input type="checkbox" disabled={r.paid} checked={!!collectSel[r.item.id]} onChange={e => setCollectSel({ ...collectSel, [r.item.id]: e.target.checked })} />
+                                                    <span className="flex-1 truncate font-bold">{r.item.name}</span>
+                                                    <span className="text-gray-500 shrink-0">{Number(r.item.fee || 0).toLocaleString()}원</span>
+                                                    <span className={`shrink-0 px-2 py-0.5 rounded-full font-bold ${r.status === '수금완료' ? 'bg-green-100 text-green-700' : r.status === '미수금' ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-600'}`}>{r.status}</span>
+                                                </label>
+                                            ))}
+                                            <button onClick={handleBulkCollect} className="sticky bottom-0 w-full mt-3 bg-[#0B5E4D] text-white font-bold py-3 rounded-xl">선택한 {Object.values(collectSel).filter(Boolean).length}건 수금완료 처리</button>
+                                        </div>
+                                    )}
+                                    {toolsModal === 'history' && adminMode && (
+                                        <div>
+                                            <p className="text-gray-500 mb-2">최근 200건의 변경 기록입니다. (누가, 언제, 어떤 항목을 바꿨는지)</p>
+                                            {changeMsg && <p className="text-gray-400 py-4 text-center">{changeMsg}</p>}
+                                            {changeRows.map(r => (
+                                                <div key={r.id} className="py-2 border-t">
+                                                    <div className="flex justify-between gap-2"><span className="font-bold truncate">{r.company_name || r.company_id}</span><span className="text-gray-400 shrink-0">{new Date(r.changed_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
+                                                    <p className="text-gray-500">{r.actor} · {r.kind === 'create' ? '신규 등록' : r.kind === 'delete' ? '삭제' : '수정'}</p>
+                                                    {(r.changes || []).map((c, i) => <p key={i} className="text-[11px] text-gray-700 break-words">• {c.k}: {c.from}{c.to ? ` → ${c.to}` : ''}</p>)}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {toolsModal === 'newcount' && adminMode && (
+                                        <div>
+                                            <p className="text-gray-500 mb-2">{toolMonth}에 방역을 시작한 업체를 담당 대원별로 집계합니다. (영업처·영업실패 제외)</p>
+                                            <p className="font-bold mb-2">합계 {newCountRows.total}건</p>
+                                            {newCountRows.rows.map(r => (
+                                                <div key={r.name} className="py-2 border-t">
+                                                    <div className="flex justify-between font-bold"><span>{r.name}</span><span>{r.items.length}건</span></div>
+                                                    {r.items.length > 0 && <p className="text-gray-500 mt-0.5">{r.items.map(d => d.name).join(', ')}</p>}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     {uncollectedModal && (
                         <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center p-4 overflow-y-auto">
                             <div className="bg-white rounded-3xl p-6 w-full max-w-2xl my-8 shadow-2xl">
@@ -2374,7 +2693,7 @@
             }
         });
 
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+        ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
     </script>
 </body>
 </html>
