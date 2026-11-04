@@ -482,6 +482,7 @@
             const [editError, setEditError] = useState("");
 
             const [showHistoryForm, setShowHistoryForm] = useState(false);
+            const [contractBusy, setContractBusy] = useState(false);
             const [historyForm, setHistoryForm] = useState({ date: TODAY, time: "10:00", type: "방역", methods: ["살충"], chemicals: ["롱다운플러스"], note: "", issue: "", author: "이원식" });
             const [editingHistoryId, setEditingHistoryId] = useState(null);
 
@@ -751,6 +752,41 @@
             const handleEditHistoryInit = (h) => {
                 setHistoryForm({ date: h.date, time: h.time || h.startTime || "10:00", type: h.type, author: h.author || selectedItem.manager, methods: h.methods || [], chemicals: h.chemicals || [], note: h.type === "방역" ? "" : h.content, issue: h.issue || "" });
                 setEditingHistoryId(h.id); setShowHistoryForm(true); setShowPayForm(false); setIsEditing(false);
+            };
+
+            const handleContractUpload = async (e) => {
+                const file = e.target.files && e.target.files[0];
+                e.target.value = "";
+                if (!file || !selectedItem) return;
+                if (file.size > 10 * 1024 * 1024) { alert("파일이 너무 큽니다. 10MB 이하만 올릴 수 있어요."); return; }
+                const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+                if (!isPdf && !file.type.startsWith("image/")) { alert("PDF 또는 사진 파일만 올릴 수 있어요."); return; }
+                setContractBusy(true);
+                try {
+                    const ext = isPdf ? "pdf" : ((file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg");
+                    const path = `${selectedItem.id}/${Date.now()}.${ext}`;
+                    const { error } = await sb.storage.from('contracts').upload(path, file, { contentType: file.type || (isPdf ? "application/pdf" : "image/jpeg"), upsert: false });
+                    if (error) throw error;
+                    const rec = { id: Date.now(), name: file.name, path, size: file.size, uploadedAt: TODAY };
+                    const updatedItem = { ...selectedItem, contracts: [...(selectedItem.contracts || []), rec] };
+                    updateDataAndSync(data.map(item => item.id === selectedItem.id ? updatedItem : item)); setSelectedItem(updatedItem);
+                } catch (err) {
+                    alert("⚠️ 계약서 업로드 실패: " + (err.message || err));
+                } finally { setContractBusy(false); }
+            };
+
+            const handleContractDownload = async (c) => {
+                const { data: d, error } = await sb.storage.from('contracts').createSignedUrl(c.path, 120, { download: c.name });
+                if (error || !d) { alert("⚠️ 파일을 불러오지 못했습니다: " + (error ? error.message : "")); return; }
+                window.open(d.signedUrl, "_blank");
+            };
+
+            const handleContractDelete = async (c) => {
+                if (!confirm(`'${c.name}' 파일을 삭제하시겠습니까?`)) return;
+                const { error } = await sb.storage.from('contracts').remove([c.path]);
+                if (error) { alert("⚠️ 삭제 실패: " + error.message); return; }
+                const updatedItem = { ...selectedItem, contracts: (selectedItem.contracts || []).filter(x => x.id !== c.id) };
+                updateDataAndSync(data.map(item => item.id === selectedItem.id ? updatedItem : item)); setSelectedItem(updatedItem);
             };
 
             const handleDeleteHistory = (logId) => {
@@ -1371,6 +1407,23 @@
                                                 <p><span className="font-bold text-amber-700">🚨 이슈사항:</span> {selectedItem.adminMemo}</p>
                                             </div>
                                         )}
+                                        <div className="mt-2 text-[11px] bg-white p-2.5 rounded-xl border border-gray-200 shadow-sm">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <span className="font-bold text-gray-700">📄 계약서</span>
+                                                <label className={"px-2.5 py-1 rounded-lg font-bold cursor-pointer " + (contractBusy ? "bg-gray-200 text-gray-400" : "bg-[#0B5E4D] text-white")}>
+                                                    {contractBusy ? "업로드 중..." : "+ 업로드"}
+                                                    <input type="file" accept=".pdf,application/pdf,image/*" className="hidden" disabled={contractBusy} onChange={handleContractUpload} />
+                                                </label>
+                                            </div>
+                                            {(selectedItem.contracts || []).length === 0 ? <p className="text-gray-400">등록된 계약서가 없습니다.</p> :
+                                                (selectedItem.contracts || []).map(c => (
+                                                    <div key={c.id} className="flex items-center justify-between gap-2 py-1 border-t border-gray-100">
+                                                        <button onClick={() => handleContractDownload(c)} className="flex-1 text-left text-blue-600 underline truncate">{c.name}</button>
+                                                        <span className="text-gray-400 shrink-0">{c.uploadedAt}</span>
+                                                        {adminMode && <button onClick={() => handleContractDelete(c)} className="text-red-500 shrink-0">삭제</button>}
+                                                    </div>
+                                                ))}
+                                        </div>
                                     </div>
                                     
                                     <div className="flex border-b bg-white text-xs font-bold">
